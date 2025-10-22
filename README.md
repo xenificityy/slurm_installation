@@ -1,53 +1,75 @@
-# Slurm Installation and Configuration
+# Slurm Installation and Configuration on 3-node cluster 
 
-This repository contains scripts to set up and configure a Slurm cluster. The scripts are designed to automate the installation and configuration process for the master node and worker nodes.
+This repository contains scripts to set up and configure a Slurm cluster (vm0 master and vm1,vm2 as worker nodes). The scripts are designed to automate the installation and configuration process for the master node and worker nodes.
 ---
 
-## Files in This Repository
-
-- **`setup_master_node.sh`**: Script to set up the Slurm controller (master node).
-- **`setup_worker_node.sh`**: Script to set up the Slurm compute nodes (worker nodes).
-- **`setup_all_nodes.sh`**: Script to set up both the master and worker nodes in one step.
-- **`slurm.conf`**: Configuration file for the Slurm cluster.
-
----
-
-## Prerequisites
-
-1. **Operating System**: Ensure all nodes are running a compatible Linux distribution (e.g., Ubuntu).
-2. **Munge**: Install and configure Munge for authentication across all nodes.
-3. **Network**: Ensure all nodes can communicate with each other (e.g., via hostname or IP).
-4. **Root Access**: Run the scripts with `sudo` privileges.
-
----
-
-## Instructions
-
-### 1. Set Up the Master Node
-Run the following command on the master node to set up the Slurm controller:
-```bash
-sudo bash setup_master_node.sh
+Step: 1 Run the below chunk on `vm0` (worker node):
+```
+nodes=(vm0 vm1 vm2)
+for node in "${nodes[@]}"; do
+  ssh $node "
+  sudo apt update
+  sudo apt-get install libmunge-dev libmunge2 munge
+  sudo apt install -y slurmdbd mariadb-server
+  sudo systemctl enable --now mariadb
+  sudo systemctl enable munge
+  sudo systemctl start munge
+  sudo munge -n | unmunge | grep STATUS"
+done
 ```
 
-### 2. Set Up Worker Nodes
-Run the following command on each worker node to set up the Slurm compute nodes:  
-```bash
-sudo bash setup_worker_node.sh
+Step: 2 Copying munge key on worker nodes (run it on `vm0`):  
+```
+sudo cp /etc/munge/munge.key ~
+sudo chmod 777 munge.key
 ```
 
-### 3. Set Up All Nodes (master and workers both)
-If you want to set up both the master and worker nodes in one step, use the following command:
-```bash
-sudo bash setup_all_nodes.sh
+```
+for node in vm1 vm2; do
+	scp ~/munge.key $node:~/
+done
+for node in "${nodes[@]}"; do
+    ssh $node "
+    sudo rm /etc/munge/munge.key
+    sudo cp ~/munge.key /etc/munge/
+    sudo chmod 400 /etc/munge/munge.key
+    sudo chmod 700 /etc/munge/
+    sudo chown munge:munge /etc/munge/munge.key
+    sudo systemctl restart munge
+    sudo systemctl status munge --no-pager"
+done
+for node in "${nodes[@]}"; do
+    ssh $node "
+    sudo systemctl restart munge "
+done
 ```
 
-Note: Make sure you have given ubuntu access permission to /var directory on all VMs (VM0 to VMn; where 'n' is total vms), use command:
-```bash
-sudo chown -R ubuntu:ubuntu /var
+Step: 3 Installing slurm-wlm on all nodes:  
 ```
-Keep your slurm.conf file at /etc/slurm/ directory
+for node in "${nodes[@]}"; do
+    ssh $node "
+    sudo apt-get install slurm-wlm -y"
+done
+```
 
+Step: 4 Copy the `slurm.conf` file at `/etc/slurm/slurm.conf` and `/etc/slurm-llnl/slurm.conf` (_you can create slurm directory if it doesnot exist in /etc directory_)  
 
-Execute the `sinfo` command on VM0 to make sure its working. It should show,
+Step: 5 Copying slurm.conf in other worker nodes:  
+
+```
+for node in "${nodes[@]}"; do
+	scp /etc/slurm*/slurm.conf $node:~/
+   ssh $node 'sudo mv ~/slurm.conf /etc/slurm/'
+done
+```
+😎😎😎😎😎😎Eureka, You made it.😎😎😎😎😎😎
+
+Execute the `sinfo` command on `vm0` to make sure its working. It should show,
 PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST
-debug*       up   infinite      5   unk* vm[1-5]
+nodes*       up   infinite      2   idle Node[2-3]
+fabric       up   infinite      2   idle Node[2-3]
+
+## Testing
+Modify accordingly and Execute the script `job_deployment_script.sh` on master node to deploy jobs on worker node.  
+You may use, `squeue` to see the status of your job.  
+After job completion you should have output_12345.txt or error_12345.txt in your worker node. 
